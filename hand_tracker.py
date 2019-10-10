@@ -39,15 +39,11 @@ class HandTracker():
         # reading tflite model paramteres
         output_details = self.interp_palm.get_output_details()
         input_details = self.interp_palm.get_input_details()
-        print('palm.output_details:', output_details)
-        print('palm.input_details:', input_details)
 
         self.in_idx = input_details[0]['index']
         self.out_reg_idx = output_details[0]['index']
         self.out_clf_idx = output_details[1]['index']
         
-        print('joint.output_details:', self.interp_joint.get_output_details())
-        print('joint.input_details:', self.interp_joint.get_input_details())
         self.in_idx_joint = self.interp_joint.get_input_details()[0]['index']
         self.out_idx_joint = self.interp_joint.get_output_details()[0]['index']
 
