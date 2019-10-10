@@ -103,17 +103,8 @@ class HandTracker():
     def _pad1(x):
         return np.pad(x, ((0,0),(0,1)), constant_values=1, mode='constant')
     
-    
-    def predict_joints(self, img_norm):
-        self.interp_joint.set_tensor(
-            self.in_idx_joint, img_norm.reshape(1,256,256,3))
-        self.interp_joint.invoke()
-
-        joints = self.interp_joint.get_tensor(self.out_idx_joint)
-        return joints.reshape(21,-1)
-
-    # compute IoU similarity
-    def calc_iou(self, box0, box1):
+    @staticmethod
+    def _iou(box0, box1):
         xmin = max(box0[0]-box0[2]/2, box1[0]-box1[2]/2)
         ymin = max(box0[1]-box0[3]/2, box1[1]-box1[3]/2)
         xmax = min(box0[0]+box0[2]/2, box1[0]+box1[2]/2)
@@ -123,22 +114,30 @@ class HandTracker():
         i = max(0, xmax - xmin) * max(0, ymax - ymin)
         u = area0 + area1 - i
         return i / u
+    
+    def predict_joints(self, img_norm):
+        self.interp_joint.set_tensor(
+            self.in_idx_joint, img_norm.reshape(1,256,256,3))
+        self.interp_joint.invoke()
+
+        joints = self.interp_joint.get_tensor(self.out_idx_joint)
+        return joints.reshape(21,-1)
 
     def non_maximum_suppression(self, reg, anchors, probs, weighted=True):
 
         sorted_idxs = probs.argsort()[::-1].tolist()
 
-        abs_bbox = np.copy(reg)
+        abs_reg = np.copy(reg)
         
         # turn relative bbox/keyp into absolute bbox/keyp
         for idx in sorted_idxs:
             center = anchors[idx,:2] * 256
             for j in range(2):
-                abs_bbox[idx,j] = center[j] + abs_bbox[idx,j]
-                abs_bbox[idx,(j+4)::2] = center[j] + abs_bbox[idx,(j+4)::2]
+                abs_reg[idx,j] = center[j] + abs_reg[idx,j]
+                abs_reg[idx,(j+4)::2] = center[j] + abs_reg[idx,(j+4)::2]
 
         remain_idxs = sorted_idxs
-        output_bbox = abs_bbox[0:0,:]
+        output_regs = abs_reg[0:0,:]
 
         while len(remain_idxs) > 0:
             # separate remain_idxs into candids and remain
@@ -146,7 +145,7 @@ class HandTracker():
             remains = []
             idx0 = remain_idxs[0]
             for idx in remain_idxs:
-                iou = self.calc_iou(abs_bbox[idx0,:], abs_bbox[idx,:])
+                iou = self._iou(abs_reg[idx0,:], abs_reg[idx,:])
                 if iou >= 0.3:
                     candids.append(idx)
                 else:
@@ -154,22 +153,22 @@ class HandTracker():
 
             # compute weighted bbox/keyp
             if not weighted:
-                weighted_bbox = abs_bbox[idx0,:]
+                weighted_reg = abs_reg[idx0,:]
             else:
-                weighted_bbox = abs_bbox[0,:] * 0
+                weighted_reg = abs_reg[0,:] * 0
                 weight_sum = 0
                 for idx in candids:
                     w = probs[idx]
                     weight_sum = weight_sum + w
-                    weighted_bbox = weighted_bbox + w * abs_bbox[idx,:]
-                weighted_bbox = weighted_bbox / weight_sum
+                    weighted_reg = weighted_reg + w * abs_reg[idx,:]
+                weighted_reg = weighted_reg / weight_sum
 
             # add a new instance
-            output_bbox = np.concatenate((output_bbox, weighted_bbox.reshape(1,-1)), axis=0)
+            output_regs = np.concatenate((output_regs, weighted_reg.reshape(1,-1)), axis=0)
             
             remain_idxs = remains
 
-        return output_bbox
+        return output_regs
 
     def detect_hand(self, img_norm):
         assert -1 <= img_norm.min() and img_norm.max() <= 1,\
