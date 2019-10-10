@@ -226,10 +226,11 @@ class HandTracker():
     def preprocess_img(self, img):
         # fit the image into a 256x256 square
         shape = np.r_[img.shape]
-        pad = (shape.max() - shape[:2]).astype('uint32') // 2
+        pad_all = (shape.max() - shape[:2]).astype('uint32')
+        pad = pad_all // 2
         img_pad = np.pad(
             img,
-            ((pad[0],pad[0]), (pad[1],pad[1]), (0,0)),
+            ((pad[0],pad_all[0]-pad[0]), (pad[1],pad_all[1]-pad[1]), (0,0)),
             mode='constant')
         img_small = cv2.resize(img_pad, (256, 256))
         img_small = np.ascontiguousarray(img_small)
