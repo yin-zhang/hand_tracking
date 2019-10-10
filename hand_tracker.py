@@ -22,7 +22,7 @@ class HandTracker():
     """
 
     def __init__(self, palm_model, joint_model, anchors_path,
-                box_enlarge=1.5, box_shift=0.2):
+                box_enlarge=1.3, box_shift=0.2):
         self.box_shift = box_shift
         self.box_enlarge = box_enlarge
 
@@ -39,11 +39,15 @@ class HandTracker():
         # reading tflite model paramteres
         output_details = self.interp_palm.get_output_details()
         input_details = self.interp_palm.get_input_details()
-        
+        print('palm.output_details:', output_details)
+        print('palm.input_details:', input_details)
+
         self.in_idx = input_details[0]['index']
         self.out_reg_idx = output_details[0]['index']
         self.out_clf_idx = output_details[1]['index']
         
+        print('joint.output_details:', self.interp_joint.get_output_details())
+        print('joint.input_details:', self.interp_joint.get_input_details())
         self.in_idx_joint = self.interp_joint.get_input_details()[0]['index']
         self.out_idx_joint = self.interp_joint.get_output_details()[0]['index']
 
@@ -71,6 +75,7 @@ class HandTracker():
         dir_v /= np.linalg.norm(dir_v)
 
         dir_v_r = dir_v @ self.R90.T
+
         return np.float32([kp2, kp2+dir_v*dist, kp2 + dir_v_r*dist])
 
     @staticmethod
@@ -105,7 +110,67 @@ class HandTracker():
         self.interp_joint.invoke()
 
         joints = self.interp_joint.get_tensor(self.out_idx_joint)
-        return joints.reshape(-1,2)
+        return joints.reshape(21,-1)
+
+    # compute IoU similarity
+    def calc_iou(self, box0, box1):
+        xmin = max(box0[0], box1[0])
+        ymin = max(box0[1], box1[1])
+        xmax = max(xmin, min(box0[0]+box0[2], box1[0]+box1[2]))
+        ymax = max(ymin, min(box0[1]+box0[3], box1[1]+box1[3]))
+        area0 = box0[2] * box0[3]
+        area1 = box1[2] * box1[3]
+        i = (xmax - xmin) * (ymax - ymin)
+        u = area0 + area1 - i
+        return i / u
+
+    def non_maximum_suppression(self, reg, anchors, probs, weighted=True):
+        
+        sorted_idxs = probs.argsort()[::-1].tolist()
+
+        abs_bbox = reg
+        
+        # turn relative bbox/keyp into absolute bbox/keyp
+        for i in range(len(sorted_idxs)):
+            idx = sorted_idxs[i]
+            center = anchors[idx,:2] * 256
+            for j in range(2):
+                abs_bbox[idx,j] = center[j] + abs_bbox[idx,j]
+                abs_bbox[idx,(j+4):-1:2] = center[j] + abs_bbox[idx,(j+4):-1:2]
+
+        remain_idxs = sorted_idxs
+        output_bbox = abs_bbox[0:0,:]
+
+        while len(remain_idxs) > 0:
+            # separate remain_idxs into candids and remain
+            candids = []
+            remains = []
+            idx0 = remain_idxs[0]
+            for idx in remain_idxs:
+                iou = self.calc_iou(abs_bbox[idx0,:], abs_bbox[idx,:])
+                if iou >= 0.3:
+                    candids.append(idx)
+                else:
+                    remains.append(idx)
+
+            # compute weighted bbox/keyp
+            if not weighted:
+                weighted_bbox = abs_bbox[idx0,:]
+            else:
+                weighted_bbox = abs_bbox[0,:] * 0
+                weight_sum = 0
+                for idx in candids:
+                    w = probs[idx]
+                    weight_sum = weight_sum + w
+                    weighted_bbox = weighted_bbox + w * abs_bbox[idx,:]
+                weighted_bbox = weighted_bbox / weight_sum
+
+            # add a new instance
+            output_bbox = np.concatenate((output_bbox, weighted_bbox.reshape(1,-1)), axis=0)
+            
+            remain_idxs = remains
+
+        return output_bbox
 
     def detect_hand(self, img_norm):
         assert -1 <= img_norm.min() and img_norm.max() <= 1,\
@@ -119,35 +184,45 @@ class HandTracker():
 
         out_reg = self.interp_palm.get_tensor(self.out_reg_idx)[0]
         out_clf = self.interp_palm.get_tensor(self.out_clf_idx)[0,:,0]
+        out_prb = self._sigm(out_clf)
 
         # finding the best prediction
-        # TODO: replace it with non-max suppression
-        detecion_mask = self._sigm(out_clf) > 0.7
-        candidate_detect = out_reg[detecion_mask]
-        candidate_anchors = self.anchors[detecion_mask]
+        detection_mask = out_prb > 0.7
+        filtered_detect = out_reg[detection_mask]
+        filtered_anchors = self.anchors[detection_mask]
+        filtered_probs = out_prb[detection_mask]
 
-        if candidate_detect.shape[0] == 0:
+        if filtered_detect.shape[0] == 0:
             print("No hands found")
             return None, None, None
-        # picking the widest suggestion while NMS is not implemented
-        max_idx = np.argmax(candidate_detect[:, 3])
 
-        # bounding box offsets, width and height
-        dx,dy,w,h = candidate_detect[max_idx, :4]
-        center_wo_offst = candidate_anchors[max_idx,:2] * 256
+        # perform non-maximum suppression
+        candidate_detect = self.non_maximum_suppression(filtered_detect, filtered_anchors, filtered_probs)
+
+        list_sources = []
+        list_keypoints = []
+
+        for idx in range(candidate_detect.shape[0]):
+
+            # bounding box offsets, width and height
+            x,y,w,h = candidate_detect[idx, :4]
         
-        # 7 initial keypoints
-        keypoints = center_wo_offst + candidate_detect[max_idx,4:].reshape(-1,2)
-        side = max(w,h) * self.box_enlarge
+            # 7 initial keypoints
+            keypoints = candidate_detect[idx,4:].reshape(-1,2)
+            side = max(w,h) * self.box_enlarge
         
-        # now we need to move and rotate the detected hand for it to occupy a
-        # 256x256 square
-        # line from wrist keypoint to middle finger keypoint
-        # should point straight up
-        # TODO: replace triangle with the bbox directly
-        source = self._get_triangle(keypoints[0], keypoints[2], side)
-        source -= (keypoints[0] - keypoints[2]) * self.box_shift
-        return source, keypoints
+            # now we need to move and rotate the detected hand for it to occupy a
+            # 256x256 square
+            # line from wrist keypoint to middle finger keypoint
+            # should point straight up
+            # TODO: replace triangle with the bbox directly
+            source = self._get_triangle(keypoints[0], keypoints[2], side)
+            source -= (keypoints[0] - keypoints[2]) * self.box_shift
+
+            list_sources.append(source)
+            list_keypoints.append(keypoints)
+            
+        return list_sources, list_keypoints
 
     def preprocess_img(self, img):
         # fit the image into a 256x256 square
@@ -167,34 +242,49 @@ class HandTracker():
     def __call__(self, img):
         img_pad, img_norm, pad = self.preprocess_img(img)
         
-        source, keypoints = self.detect_hand(img_norm)
-        if source is None:
+        list_sources, list_keypoints = self.detect_hand(img_norm)
+        if list_sources is None:
             return None, None
 
-        # calculating transformation from img_pad coords
-        # to img_landmark coords (cropped hand image)
-        scale = max(img.shape) / 256
-        Mtr = cv2.getAffineTransform(
-            source * scale,
-            self._target_triangle
-        )
-        
-        img_landmark = cv2.warpAffine(
-            self._im_normalize(img_pad), Mtr, (256,256)
-        )
-        
-        joints = self.predict_joints(img_landmark)
-        
-        # adding the [0,0,1] row to make the matrix square
-        Mtr = self._pad1(Mtr.T).T
-        Mtr[2,:2] = 0
+        list_joints = []
+        list_bbox = []
+        for i in range(len(list_sources)):
 
-        Minv = np.linalg.inv(Mtr)
+            source = list_sources[i]
+            keypoints = list_keypoints[i]
 
-        # projecting keypoints back into original image coordinate space
-        kp_orig = (self._pad1(joints) @ Minv.T)[:,:2]
-        box_orig = (self._target_box @ Minv.T)[:,:2]
-        kp_orig -= pad[::-1]
-        box_orig -= pad[::-1]
+            # calculating transformation from img_pad coords
+            # to img_landmark coords (cropped hand image)
+            scale = max(img.shape) / 256
+            Mtr = cv2.getAffineTransform(
+                source * scale,
+                self._target_triangle
+            )
+
+            img_landmark = cv2.warpAffine(
+                self._im_normalize(img_pad), Mtr, (256,256)
+            )
         
-        return kp_orig, box_orig
+            joints = self.predict_joints(img_landmark)
+        
+            # adding the [0,0,1] row to make the matrix square
+            Mtr = self._pad1(Mtr.T).T
+            Mtr[2,:2] = 0
+            
+            Minv = np.linalg.inv(Mtr)
+
+            # projecting 2d keypoints back into original image coordinate space
+            kp_orig = (self._pad1(joints[:,:2]) @ Minv.T)[:,:2]
+            box_orig = (self._target_box @ Minv.T)[:,:2]
+            kp_orig -= pad[::-1]
+            box_orig -= pad[::-1]
+
+            joints[:,:2] = kp_orig
+            if joints.shape[1] == 3:
+                # scale Z coordinate proportionally
+                joints[:,2] = joints[:,2] * np.sqrt(cv2.determinant(Minv))
+
+            list_joints.append(joints)
+            list_bbox.append(box_orig)
+            
+        return list_joints, list_bbox
