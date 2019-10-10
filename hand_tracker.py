@@ -6,15 +6,17 @@ import tensorflow as tf
 class HandTracker():
     r"""
     Class to use Google's Mediapipe HandTracking pipeline from Python.
-    So far only detection of a single hand is supported.
-    Any any image size and aspect ratio supported.
+    Multiple hands are supported.
+    Any any image size and aspect ratio are supported.
+    Both 2d and 3d joints are supported.
 
     Args:
         palm_model: path to the palm_detection.tflite
         joint_model: path to the hand_landmark.tflite
         anchors_path: path to the csv containing SSD anchors
     Ourput:
-        (21,2) array of hand joints.
+        (21,3) or (21,2) array of hand joints (depending on
+        whether joint_model is 2d or 3d)
     Examples::
         >>> det = HandTracker(path1, path2, path3)
         >>> input_img = np.random.randint(0,255, 256*256*3).reshape(256,256,3)
