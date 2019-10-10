@@ -5,8 +5,8 @@ from hand_tracker import HandTracker
 det = HandTracker('models/palm_detection_without_custom_op.tflite',
                   'models/hand_landmark_3d.tflite',
                   'data/anchors.csv',
-                  box_shift=0.2, box_enlarge=1.3)
-in_bgr = cv2.imread('data/test_img.jpg')
+                  box_shift=-0.5, box_enlarge=2.6)
+in_bgr = cv2.imread('data/test_img1.jpg')
 in_rgb = in_bgr[:,:,::-1]
 list_keypoints, list_bbox = det(in_rgb)
 

@@ -22,7 +22,7 @@ class HandTracker():
     """
 
     def __init__(self, palm_model, joint_model, anchors_path,
-                box_enlarge=1.3, box_shift=0.2):
+                 box_enlarge=2.6, box_shift=-0.5):
         self.box_shift = box_shift
         self.box_enlarge = box_enlarge
 
@@ -68,7 +68,7 @@ class HandTracker():
                         [  0, 256, 1],
                     ])
     
-    def _get_triangle(self, kp0, kp2, dist=1):
+    def _get_triangle(self, ctr0, kp0, kp2, side=1, yshift=0):
         """get a triangle used to calculate Affine transformation matrix"""
 
         dir_v = kp2 - kp0
@@ -76,7 +76,9 @@ class HandTracker():
 
         dir_v_r = dir_v @ self.R90.T
 
-        return np.float32([kp2, kp2+dir_v*dist, kp2 + dir_v_r*dist])
+        ctr = ctr0 - yshift * dir_v
+        
+        return np.float32([ctr, ctr + dir_v*side/2, ctr + dir_v_r*side/2])
 
     @staticmethod
     def _triangle_to_bbox(source):
@@ -114,25 +116,24 @@ class HandTracker():
 
     # compute IoU similarity
     def calc_iou(self, box0, box1):
-        xmin = max(box0[0], box1[0])
-        ymin = max(box0[1], box1[1])
-        xmax = max(xmin, min(box0[0]+box0[2], box1[0]+box1[2]))
-        ymax = max(ymin, min(box0[1]+box0[3], box1[1]+box1[3]))
+        xmin = max(box0[0]-box0[2]/2, box1[0]-box1[2]/2)
+        ymin = max(box0[1]-box0[3]/2, box1[1]-box1[3]/2)
+        xmax = min(box0[0]+box0[2]/2, box1[0]+box1[2]/2)
+        ymax = min(box0[1]+box0[3]/2, box1[1]+box1[3]/2)
         area0 = box0[2] * box0[3]
         area1 = box1[2] * box1[3]
-        i = (xmax - xmin) * (ymax - ymin)
+        i = max(0, xmax - xmin) * max(0, ymax - ymin)
         u = area0 + area1 - i
         return i / u
 
     def non_maximum_suppression(self, reg, anchors, probs, weighted=True):
-        
+
         sorted_idxs = probs.argsort()[::-1].tolist()
 
-        abs_bbox = reg
+        abs_bbox = np.copy(reg)
         
         # turn relative bbox/keyp into absolute bbox/keyp
-        for i in range(len(sorted_idxs)):
-            idx = sorted_idxs[i]
+        for idx in sorted_idxs:
             center = anchors[idx,:2] * 256
             for j in range(2):
                 abs_bbox[idx,j] = center[j] + abs_bbox[idx,j]
@@ -204,20 +205,20 @@ class HandTracker():
 
         for idx in range(candidate_detect.shape[0]):
 
-            # bounding box offsets, width and height
-            x,y,w,h = candidate_detect[idx, :4]
-        
+            # bounding box center offsets, width and height
+            cx,cy,w,h = candidate_detect[idx, :4]
+
             # 7 initial keypoints
             keypoints = candidate_detect[idx,4:].reshape(-1,2)
-            side = max(w,h) * self.box_enlarge
         
             # now we need to move and rotate the detected hand for it to occupy a
             # 256x256 square
             # line from wrist keypoint to middle finger keypoint
             # should point straight up
-            # TODO: replace triangle with the bbox directly
-            source = self._get_triangle(keypoints[0], keypoints[2], side)
-            source -= (keypoints[0] - keypoints[2]) * self.box_shift
+            center = np.float32([cx,cy])
+            side = max(w,h) * self.box_enlarge
+            yshift = h * self.box_shift
+            source = self._get_triangle(center, keypoints[0], keypoints[2], side, yshift)
 
             list_sources.append(source)
             list_keypoints.append(keypoints)
