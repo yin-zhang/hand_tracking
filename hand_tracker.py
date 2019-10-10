@@ -133,7 +133,7 @@ class HandTracker():
             center = anchors[idx,:2] * 256
             for j in range(2):
                 abs_bbox[idx,j] = center[j] + abs_bbox[idx,j]
-                abs_bbox[idx,(j+4):-1:2] = center[j] + abs_bbox[idx,(j+4):-1:2]
+                abs_bbox[idx,(j+4)::2] = center[j] + abs_bbox[idx,(j+4)::2]
 
         remain_idxs = sorted_idxs
         output_bbox = abs_bbox[0:0,:]
