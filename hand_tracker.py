@@ -187,20 +187,20 @@ class HandTracker():
 
         out_reg = self.interp_palm.get_tensor(self.out_reg_idx)[0]
         out_clf = self.interp_palm.get_tensor(self.out_clf_idx)[0,:,0]
-        out_prb = self._sigm(out_clf)
+        out_scr = self._sigm(out_clf)
 
         # finding the best prediction
-        detection_mask = out_prb > 0.7
+        detection_mask = out_scr > 0.7
         filtered_detect = out_reg[detection_mask]
         filtered_anchors = self.anchors[detection_mask]
-        filtered_probs = out_prb[detection_mask]
+        filtered_scores = out_scr[detection_mask]
 
         if filtered_detect.shape[0] == 0:
             print("No hands found")
             return None, None, None
 
         # perform non-maximum suppression
-        candidate_detect = self.non_maximum_suppression(filtered_detect, filtered_anchors, filtered_probs)
+        candidate_detect = self.non_maximum_suppression(filtered_detect, filtered_anchors, filtered_scores)
 
         list_sources = []
         list_keypoints = []
