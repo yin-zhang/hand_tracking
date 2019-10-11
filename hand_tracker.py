@@ -125,9 +125,10 @@ class HandTracker():
         joints = self.interp_joint.get_tensor(self.out_idx_joint)
         return joints.reshape(21,-1)
 
-    def non_maximum_suppression(self, reg, anchors, probs, weighted=True):
+    def non_maximum_suppression(self, reg, anchors, scores,
+                                weighted=True, iou_thresh=0.3, max_results=-1):
 
-        sorted_idxs = probs.argsort()[::-1].tolist()
+        sorted_idxs = scores.argsort()[::-1].tolist()
 
         abs_reg = np.copy(reg)
         
@@ -148,7 +149,7 @@ class HandTracker():
             idx0 = remain_idxs[0]
             for idx in remain_idxs:
                 iou = self._iou(abs_reg[idx0,:4], abs_reg[idx,:4])
-                if iou >= 0.3:
+                if iou >= iou_thresh:
                     candids.append(idx)
                 else:
                     remains.append(idx)
@@ -158,17 +159,19 @@ class HandTracker():
                 weighted_reg = abs_reg[idx0,:]
             else:
                 weighted_reg = 0
-                weight_sum = 0
+                total_score = 0
                 for idx in candids:
-                    weight = probs[idx]
-                    weight_sum += weight
-                    weighted_reg += weighted * abs_reg[idx,:]
-                weighted_reg /= weight_sum
+                    total_score += scores[idx]
+                    weighted_reg += scores[idx] * abs_reg[idx,:]
+                weighted_reg /= total_score
 
             # add a new instance
             output_regs = np.concatenate((output_regs, weighted_reg.reshape(1,-1)), axis=0)
             
             remain_idxs = remains
+
+            if max_results > 0 and output_regs.shape[0] >= max_results:
+                break
 
         return output_regs
 
