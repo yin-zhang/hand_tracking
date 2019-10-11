@@ -157,13 +157,13 @@ class HandTracker():
             if not weighted:
                 weighted_reg = abs_reg[idx0,:]
             else:
-                weighted_reg = abs_reg[0,:] * 0
+                weighted_reg = 0
                 weight_sum = 0
                 for idx in candids:
-                    w = probs[idx]
-                    weight_sum = weight_sum + w
-                    weighted_reg = weighted_reg + w * abs_reg[idx,:]
-                weighted_reg = weighted_reg / weight_sum
+                    weight = probs[idx]
+                    weight_sum += weight
+                    weighted_reg += weighted * abs_reg[idx,:]
+                weighted_reg /= weight_sum
 
             # add a new instance
             output_regs = np.concatenate((output_regs, weighted_reg.reshape(1,-1)), axis=0)
