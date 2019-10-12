@@ -197,7 +197,7 @@ class HandTracker():
 
         if filtered_detect.shape[0] == 0:
             print("No hands found")
-            return None, None, None
+            return None, None
 
         # perform non-maximum suppression
         candidate_detect = self.non_maximum_suppression(filtered_detect, filtered_anchors, filtered_scores)
