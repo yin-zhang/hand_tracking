@@ -104,7 +104,7 @@ class HandTracker():
         return np.pad(x, ((0,0),(0,1)), constant_values=1, mode='constant')
     
     @staticmethod
-    def _iou(box0, box1):
+    def _sim(box0, box1, do_iou=True):
         x0,y0,w0,h0 = box0
         x1,y1,w1,h1 = box1
         area0 = w0 * h0
@@ -114,7 +114,12 @@ class HandTracker():
         xmax = min(x0+w0/2,x1+w1/2)
         ymax = min(y0+h0/2,y1+h1/2)
         i = max(0, xmax - xmin) * max(0, ymax - ymin)
-        u = area0 + area1 - i
+        if do_iou:
+            u = area0 + area1 - i
+        else:
+            # modified jaccard
+            u = area1
+        
         return i / u
     
     def predict_joints(self, img_norm):
@@ -126,7 +131,7 @@ class HandTracker():
         return joints.reshape(21,-1)
 
     def non_maximum_suppression(self, reg, anchors, scores,
-                                weighted=True, iou_thresh=0.3, max_results=-1):
+                                weighted=True, sim_thresh=0.3, max_results=-1):
 
         sorted_idxs = scores.argsort()[::-1].tolist()
 
@@ -148,8 +153,8 @@ class HandTracker():
             remains = []
             idx0 = remain_idxs[0]
             for idx in remain_idxs:
-                iou = self._iou(abs_reg[idx0,:4], abs_reg[idx,:4])
-                if iou >= iou_thresh:
+                sim = self._sim(abs_reg[idx0,:4], abs_reg[idx,:4], do_iou=False)
+                if sim >= sim_thresh:
                     candids.append(idx)
                 else:
                     remains.append(idx)
@@ -196,7 +201,6 @@ class HandTracker():
         filtered_scores = out_scr[detection_mask]
 
         if filtered_detect.shape[0] == 0:
-            print("No hands found")
             return None, None
 
         # perform non-maximum suppression
