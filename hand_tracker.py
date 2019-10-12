@@ -107,20 +107,19 @@ class HandTracker():
     def _sim(box0, box1, do_iou=True):
         x0,y0,w0,h0 = box0
         x1,y1,w1,h1 = box1
-        area0 = w0 * h0
-        area1 = w1 * h1
         xmin = max(x0-w0/2,x1-w1/2)
         ymin = max(y0-h0/2,y1-h1/2)
         xmax = min(x0+w0/2,x1+w1/2)
         ymax = min(y0+h0/2,y1+h1/2)
         i = max(0, xmax - xmin) * max(0, ymax - ymin)
+        area0 = w0 * h0
+        area1 = w1 * h1
         if do_iou:
             u = area0 + area1 - i
         else:
             # modified jaccard
             u = area1
-        
-        return i / u
+        return i / (u + 1e-6)
     
     def predict_joints(self, img_norm):
         self.interp_joint.set_tensor(
